@@ -32,7 +32,10 @@ src/
   config.ts   Reads YAHOO_EMAIL and YAHOO_APP_PASSWORD from the environment (.env locally)
   imap.ts     Opens a TLS connection to imap.mail.yahoo.com:993, runs one job, closes it
   tools.ts    Defines the three tools and what they return
+  body.ts     Picks readable body text, converting HTML when the plain-text part is empty
   index.ts    Starts the server over stdio, for local testing
+test/
+  body.test.ts  Checks body extraction (run with `npm test`)
 ```
 
 `tools.ts` is kept separate from `index.ts` so Step 4 can reuse the same tools behind an HTTPS endpoint.
@@ -44,6 +47,7 @@ src/
 | `@modelcontextprotocol/sdk` | Official MCP toolkit: handles the protocol between Claude and this server |
 | `imapflow` | IMAP client used to read the mailbox |
 | `mailparser` | Turns a raw email into headers, text and attachment info |
+| `html-to-text` | Converts HTML-only emails (receipts, newsletters) to readable text |
 | `zod` | Validates the inputs Claude sends to each tool |
 | `dotenv` | Loads your `.env` file when running locally |
 | `typescript`, `tsx`, `@types/*` | Dev only: compile and run TypeScript |

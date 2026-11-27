@@ -4,6 +4,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { simpleParser, type AddressObject } from "mailparser";
 import { z } from "zod";
 import type { YahooConfig } from "./config.js";
+import { bodyText } from "./body.js";
 import { inFolderReadOnly, withImap } from "./imap.js";
 
 // Emails are written by strangers. This note reminds the model to treat
@@ -156,7 +157,7 @@ export function registerReadOnlyTools(server: McpServer, config: YahooConfig) {
         }
 
         const parsed = await simpleParser(message.source);
-        const body = parsed.text ?? "";
+        const body = bodyText(parsed);
         return asJson({
           note: UNTRUSTED_NOTE,
           uid: message.uid,
