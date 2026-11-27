@@ -16,6 +16,11 @@ test("buildMime keeps Bcc out of the headers", async () => {
   assert.doesNotMatch(raw, /secret@example\.com/);
 });
 
+test("drafts keep Bcc so it isn't lost before sending", async () => {
+  const raw = (await buildMime({ from: ME, to: ["a@example.com"], bcc: ["secret@example.com"], subject: "Hi", text: "Body" }, { keepBcc: true })).toString();
+  assert.match(raw, /^Bcc: secret@example\.com/m);
+});
+
 const original = [
   "From: Sam <sam@example.com>",
   "To: me@yahoo.com, lee@example.org",
@@ -56,4 +61,20 @@ test("a built reply carries In-Reply-To and References headers", async () => {
   const raw = (await buildMime({ from: ME, to: r.to, subject: r.subject, text: "Sure", inReplyTo: r.inReplyTo, references: r.references })).toString();
   assert.match(raw, /^In-Reply-To: <abc@example\.com>/m);
   assert.match(raw, /^References: <older@example\.com> <abc@example\.com>/m);
+});
+
+test("replying to your own sent message goes to its recipients, not to you", async () => {
+  const mine = original.replace("From: Sam <sam@example.com>", "From: Me <me@yahoo.com>").replace("To: me@yahoo.com, lee@example.org", "To: lee@example.org");
+  const r = replyDetails(await simpleParser(mine), ME, false, "");
+  assert.deepEqual(r.to, ["lee@example.org"]);
+});
+
+test("reply-all never falls back to your own address", async () => {
+  const selfOnly = original
+    .replace("From: Sam <sam@example.com>", "From: me@yahoo.com")
+    .replace("To: me@yahoo.com, lee@example.org", "To: me@yahoo.com")
+    .replace("Cc: kim@example.net\r\n", "");
+  const r = replyDetails(await simpleParser(selfOnly), ME, true, "");
+  assert.deepEqual(r.to, []);
+  assert.deepEqual(r.cc, []);
 });

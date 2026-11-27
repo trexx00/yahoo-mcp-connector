@@ -34,7 +34,14 @@ export interface PendingStore {
   /** Returns the action and removes it, so a code can only be used once. */
   take(code: string): Promise<PendingAction | undefined>;
   sentToday(): Promise<number>;
-  recordSend(): Promise<void>;
+  /**
+   * Claims one of today's send slots in a single step, so two confirmations
+   * at the same moment can't both slip under the limit. Returns false when
+   * the limit is reached.
+   */
+  reserveSend(limit: number): Promise<boolean>;
+  /** Gives a slot back when the send failed. */
+  releaseSend(): Promise<void>;
 }
 
 function today(): string {
@@ -64,9 +71,16 @@ export class MemoryPendingStore implements PendingStore {
     return this.sends.count;
   }
 
-  async recordSend(): Promise<void> {
-    await this.sentToday(); // rolls the counter over at midnight UTC
+  async reserveSend(limit: number): Promise<boolean> {
+    // No await between the check and the increment, so this can't interleave.
+    if (this.sends.day !== today()) this.sends = { day: today(), count: 0 };
+    if (this.sends.count >= limit) return false;
     this.sends.count += 1;
+    return true;
+  }
+
+  async releaseSend(): Promise<void> {
+    if (this.sends.day === today() && this.sends.count > 0) this.sends.count -= 1;
   }
 
   private dropExpired() {

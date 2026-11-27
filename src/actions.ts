@@ -18,8 +18,6 @@ import { inFolder, inFolderReadOnly, withImap } from "./imap.js";
 import type { PendingStore } from "./pending.js";
 import { sendRaw } from "./smtp.js";
 
-const PREVIEW_CHARS = 3000;
-
 function asJson(value: unknown) {
   return { content: [{ type: "text" as const, text: JSON.stringify(value, null, 2) }] };
 }
@@ -93,7 +91,8 @@ function previewOf(d: Draft) {
     bcc: d.bcc?.length ? d.bcc : undefined,
     subject: d.subject,
     isReply: Boolean(d.inReplyTo),
-    body: d.text.length > PREVIEW_CHARS ? d.text.slice(0, PREVIEW_CHARS) + "\n…[preview shortened]" : d.text,
+    // The whole body, never shortened: what is approved is exactly what is sent.
+    body: d.text,
   };
 }
 
@@ -115,7 +114,7 @@ export function registerActionTools(server: McpServer, config: YahooConfig, stor
       try {
         const result = await withImap(config, async (client) => {
           const draft = await composeDraft(client, config, args);
-          const raw = await buildMime(draft);
+          const raw = await buildMime(draft, { keepBcc: true });
           const drafts = await specialFolder(client, "\\Drafts");
           const appended = await client.append(drafts, raw, ["\\Draft", "\\Seen"]);
           return { folder: drafts, uid: appended ? appended.uid ?? null : null, preview: previewOf(draft) };
@@ -281,11 +280,16 @@ export function registerActionTools(server: McpServer, config: YahooConfig, stor
         }
 
         if (action.kind === "send") {
-          if ((await store.sentToday()) >= config.maxSendsPerDay) {
+          if (!(await store.reserveSend(config.maxSendsPerDay))) {
             return asError(`Daily send limit reached (${config.maxSendsPerDay}).`);
           }
-          const info = await sendRaw(config, action.raw, action.envelope);
-          await store.recordSend();
+          let info;
+          try {
+            info = await sendRaw(config, action.raw, action.envelope);
+          } catch (e) {
+            await store.releaseSend(); // nothing went out, so the slot is returned
+            throw e;
+          }
 
           // Tidy-up steps. The email is already sent, so problems here are reported, not thrown.
           const notes: string[] = [];

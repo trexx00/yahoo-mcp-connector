@@ -24,10 +24,17 @@ test("codes are unique", async () => {
   assert.equal(codes.size, 200);
 });
 
-test("daily send counter counts sends", async () => {
+test("send slots are capped, even when claimed at the same moment", async () => {
   const store = new MemoryPendingStore();
-  assert.equal(await store.sentToday(), 0);
-  await store.recordSend();
-  await store.recordSend();
-  assert.equal(await store.sentToday(), 2);
+  const results = await Promise.all(Array.from({ length: 5 }, () => store.reserveSend(3)));
+  assert.equal(results.filter(Boolean).length, 3);
+  assert.equal(await store.sentToday(), 3);
+});
+
+test("a failed send gives its slot back", async () => {
+  const store = new MemoryPendingStore();
+  assert.equal(await store.reserveSend(1), true);
+  assert.equal(await store.reserveSend(1), false);
+  await store.releaseSend();
+  assert.equal(await store.reserveSend(1), true);
 });

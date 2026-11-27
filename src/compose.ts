@@ -27,8 +27,12 @@ export function extractAddresses(entries: string[] = []): string[] {
   return out;
 }
 
-/** Builds the full email. Bcc recipients are left out of the headers. */
-export async function buildMime(d: Draft): Promise<Buffer> {
+/**
+ * Builds the full email. Bcc recipients are left out of the headers, except
+ * for drafts saved in the Drafts folder (keepBcc), so they aren't lost when
+ * the draft is sent later.
+ */
+export async function buildMime(d: Draft, opts: { keepBcc?: boolean } = {}): Promise<Buffer> {
   const composer = new MailComposer({
     from: d.from,
     to: d.to,
@@ -39,7 +43,9 @@ export async function buildMime(d: Draft): Promise<Buffer> {
     inReplyTo: d.inReplyTo,
     references: d.references,
   });
-  return composer.compile().build();
+  const node = composer.compile();
+  node.keepBcc = Boolean(opts.keepBcc);
+  return node.build();
 }
 
 function addrList(a?: AddressObject | AddressObject[]): { name: string; address: string }[] {
@@ -69,7 +75,12 @@ export interface ReplyDetails {
  */
 export function replyDetails(original: ParsedMail, self: string, replyAll: boolean, quotedText: string): ReplyDetails {
   const me = self.toLowerCase();
-  const replyTarget = addrList(original.replyTo).length ? addrList(original.replyTo) : addrList(original.from);
+  const fromMe = addrList(original.from).some((a) => a.address === me);
+  // Replying to a message you sent yourself goes to the people you sent it to,
+  // as Yahoo Mail and other mail apps do.
+  const replyTarget = fromMe
+    ? addrList(original.to)
+    : addrList(original.replyTo).length ? addrList(original.replyTo) : addrList(original.from);
   const to = replyTarget.filter((a) => a.address !== me);
 
   let cc: { name: string; address: string }[] = [];
@@ -95,7 +106,9 @@ export function replyDetails(original: ParsedMail, self: string, replyAll: boole
     quotedText.split("\n").map((line) => `> ${line}`).join("\n");
 
   return {
-    to: (to.length ? to : replyTarget).map(formatAddr),
+    // Never falls back to your own address. If nobody is left, the caller
+    // reports "No recipients" instead of sending to yourself.
+    to: to.map(formatAddr),
     cc: cc.map(formatAddr),
     subject: /^re:/i.test(subject) ? subject : `Re: ${subject}`,
     inReplyTo: original.messageId,
