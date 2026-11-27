@@ -8,6 +8,22 @@ export interface YahooConfig {
   appPassword: string;
   imapHost: string;
   imapPort: number;
+  smtpHost: string;
+  smtpPort: number;
+  /** Most emails the server will send in one day (server-enforced). */
+  maxSendsPerDay: number;
+  /** Save a copy of each sent email in the Sent folder. */
+  saveSentCopy: boolean;
+  /** How long a preview code stays valid. */
+  confirmTtlMinutes: number;
+}
+
+function intFromEnv(name: string, fallback: number): number {
+  const raw = process.env[name]?.trim();
+  if (!raw) return fallback;
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < 0) throw new Error(`${name} must be a whole number`);
+  return n;
 }
 
 export function loadConfig(): YahooConfig {
@@ -26,5 +42,10 @@ export function loadConfig(): YahooConfig {
     appPassword,
     imapHost: "imap.mail.yahoo.com",
     imapPort: 993, // IMAP over TLS (encrypted from the first byte)
+    smtpHost: "smtp.mail.yahoo.com",
+    smtpPort: 465, // SMTP over TLS (encrypted from the first byte)
+    maxSendsPerDay: intFromEnv("MAX_SENDS_PER_DAY", 20),
+    saveSentCopy: (process.env.SAVE_SENT_COPY ?? "true").trim().toLowerCase() !== "false",
+    confirmTtlMinutes: intFromEnv("CONFIRM_TTL_MINUTES", 10),
   };
 }
