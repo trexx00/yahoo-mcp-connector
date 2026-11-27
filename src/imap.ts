@@ -38,3 +38,17 @@ export async function inFolderReadOnly<T>(
     lock.release();
   }
 }
+
+// Opens a folder with write access, for the action tools in actions.ts.
+export async function inFolder<T>(
+  client: ImapFlow,
+  folder: string,
+  job: () => Promise<T>,
+): Promise<T> {
+  const lock = await client.getMailboxLock(folder);
+  try {
+    return await job();
+  } finally {
+    lock.release();
+  }
+}
