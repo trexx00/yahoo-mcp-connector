@@ -9,9 +9,9 @@ It is an [MCP](https://modelcontextprotocol.io) server that talks to Yahoo over 
 |---|---|---|
 | 1 | Yahoo app password | Done (kept by the account owner, never in this repo) |
 | 2 | Local, read-only server tested with MCP Inspector | Done |
-| **3** | **Action tools: draft, send, move, flag, delete** | **This step** |
-| 4 | HTTPS transport and OAuth sign-in | Next |
-| 5 | Deploy to AWS Lambda | |
+| 3 | Action tools: draft, send, move, flag, delete | Done |
+| **4** | **HTTPS transport and Cognito sign-in** | **This step** |
+| 5 | Deploy to AWS Lambda | Next |
 | 6 | Add as a custom connector in Claude | |
 | 7 | Test on desktop and in Duet | |
 
@@ -61,11 +61,15 @@ src/
   compose.ts   Builds emails and works out reply recipients and threading headers
   folders.ts   Finds Yahoo's Drafts, Sent, Trash and Archive folders
   smtp.ts      Sends through smtp.mail.yahoo.com:465 (TLS)
-  index.ts     Starts the server over stdio, for local testing
+  server.ts    Builds the MCP server with all ten tools
+  index.ts     Local entry point over stdio (no sign-in; only your computer can reach it)
+  auth.ts      Cognito sign-in: checks tokens and describes the login server to Claude
+  app.ts       HTTPS entry point: /mcp plus the sign-in discovery documents
+  http.ts      Runs app.ts on localhost for testing
 test/          Unit tests (run with `npm test`)
 ```
 
-`tools.ts` and `actions.ts` are kept separate from `index.ts` so Step 4 can reuse the same tools behind an HTTPS endpoint.
+Both entry points build the same server from `server.ts`, so the tools behave identically locally and on AWS.
 
 ## What gets installed, and why
 
@@ -76,6 +80,8 @@ test/          Unit tests (run with `npm test`)
 | `mailparser` | Turns a raw email into headers, text and attachment info |
 | `html-to-text` | Converts HTML-only emails (receipts, newsletters) to readable text |
 | `nodemailer` | Builds emails and sends them through Yahoo's SMTP server |
+| `express` | Web server framework for the HTTPS endpoint |
+| `aws-jwt-verify` | AWS's official library for checking Cognito tokens |
 | `zod` | Validates the inputs Claude sends to each tool |
 | `dotenv` | Loads your `.env` file when running locally |
 | `typescript`, `tsx`, `@types/*` | Dev only: compile and run TypeScript |
@@ -90,7 +96,7 @@ test/          Unit tests (run with `npm test`)
 ```bash
 git clone https://github.com/trexx00/yahoo-mcp-connector.git
 cd yahoo-mcp-connector
-git checkout step-3-action-tools   # until this step is merged
+git checkout step-4-http-oauth   # until this step is merged
 npm install
 ```
 
@@ -126,6 +132,60 @@ This downloads and starts the [MCP Inspector](https://github.com/modelcontextpro
 9. `delete_message`, then `confirm_action`. The message should be in **Trash**, not gone.
 
 Press `Ctrl+C` in the terminal to stop.
+
+## How sign-in works (Step 4)
+
+```
+Claude ──(1) POST /mcp, no token──────────────▶ this server ──▶ 401 + "sign-in info is here"
+Claude ──(2) reads /.well-known/... ───────────▶ this server ──▶ "log in at Cognito, PKCE required"
+Claude ──(3) opens Cognito login page ─────────▶ Cognito  (you: username, password, MFA code)
+Cognito ─(4) access token ─────────────────────▶ Claude
+Claude ──(5) POST /mcp + token ────────────────▶ this server checks the token, then runs the tool
+```
+
+The server never sees your Cognito password. It only checks that each token was signed by **your** user pool, issued to **your** app client, is an access token, and hasn't expired. Self sign-up is off, so the only account that can ever log in is the one you create.
+
+## Set up Cognito (AWS console, region us-east-2)
+
+You do these steps yourself. Nothing here is a secret to paste into chat. The pool ID, client ID and domain are identifiers, and your password and MFA stay with you.
+
+**1. Create the user pool**
+1. Open the AWS console, check the region (top right) says **US East (Ohio) us-east-2**, and go to **Amazon Cognito**.
+2. Click **Create user pool**. On the setup screen:
+   - **Application type:** *Single-page application (SPA)*. This makes a public app client with no secret, which is what Claude needs with PKCE.
+   - **Name your application:** `claude-yahoo-mail`
+   - **Options for sign-in identifiers:** *Username*
+   - **Self-registration:** leave **unchecked**. This keeps strangers from creating accounts.
+   - **Return URL:** `https://claude.ai/api/mcp/auth_callback`
+3. Click **Create user directory**.
+
+**2. Check the feature plan (cost).** Open the pool and go to **Settings → Feature plan**. *Lite* or *Essentials* both work for us. Check the free monthly-active-user allowance shown on that page. One user should cost nothing, but confirm before continuing.
+
+**3. Require MFA.** Go to **Authentication → Sign-in → Multi-factor authentication → Edit**. Choose **Require MFA**, tick **Authenticator apps**, and save.
+
+**4. Configure the app client.** Go to **Applications → App clients → claude-yahoo-mail**.
+- On the **Login pages** tab, click **Edit** and set:
+  - **Allowed callback URLs:** `https://claude.ai/api/mcp/auth_callback`, `http://localhost:6274/oauth/callback` and `http://localhost:6274/oauth/callback/debug` (the last two are for the MCP Inspector)
+  - **OAuth 2.0 grant types:** *Authorization code grant* only
+  - **OpenID Connect scopes:** *OpenID* (untick the others)
+- Under **App client information → Edit**, set the access token to **1 hour** and the refresh token to **30 days**.
+
+**5. Note the login domain.** Go to **Branding → Domain**. If there's no domain yet, create a **Cognito domain** with a prefix like `yahoo-mcp-<something-unique>`. Copy the full domain, e.g. `https://yahoo-mcp-tj.auth.us-east-2.amazoncognito.com`.
+
+**6. Create your user.** Go to **User management → Users → Create user**. Pick a username and set a strong temporary password. You'll change it, and set up your authenticator app, the first time you log in.
+
+**7. Put the identifiers in `.env`** on your computer: `COGNITO_USER_POOL_ID` (Overview page), `COGNITO_CLIENT_ID` (App client page) and `COGNITO_DOMAIN` (step 5). See `.env.example`.
+
+## Test sign-in on your computer
+
+1. `npm install`, then `npm run dev:http`. It should print `listening at http://localhost:3000/mcp`.
+2. In a second terminal, run `npm run inspect:http`.
+3. In the Inspector, set **Transport** to *Streamable HTTP* and the **URL** to `http://localhost:3000/mcp`.
+4. Open **Authentication**, set **Client ID** to your `COGNITO_CLIENT_ID` and **Scope** to `openid`, then click **Connect**. The Inspector should send you to the Cognito login page. Log in, change your password, and set up MFA.
+5. Back in the Inspector, **List Tools** should show all ten tools. Try `list_folders`.
+6. Check that the lock works: run `curl -i -X POST http://localhost:3000/mcp`. It must answer **401** with a `WWW-Authenticate` header.
+
+If the Cognito page shows an error such as `redirect_mismatch` or `invalid_request`, copy only the error text (not any codes in the address bar) and send it to Claude.
 
 ## Troubleshooting
 
